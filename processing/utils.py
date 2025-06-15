@@ -209,7 +209,6 @@ def perform_processing(cap: cv2.VideoCapture):
     def near_line(cx, threshold=100):
         return abs(cx - line_x) <= threshold
 
-    cap = cv2.VideoCapture("filmy/00000.mp4")
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     line_x = frame_width // 2 - COUNT_LINE_OFFSET

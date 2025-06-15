@@ -5,24 +5,20 @@ import csv
 import time
 from collections import deque
 
-# Parameters
 MAX_DISTANCE = 50
 MIN_AREA = 500
 COUNT_LINE_OFFSET = 200
 MEMORY = 30
-EXTRACTION_INTERVAL = 5  # seconds
+EXTRACTION_INTERVAL = 5
 
-# Directories
 os.makedirs("pictures", exist_ok=True)
 csv_file = "bboxes.csv"
 
-# CSV header initialization
 if not os.path.isfile(csv_file):
     with open(csv_file, mode="w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["id", "area", "aspect_ratio", "solidity", "extent", "label"])
 
-# Initialize
 fgbg = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=50)
 next_id = 0
 tracks = {}
@@ -103,7 +99,6 @@ def extract_features(cnt, w, h):
     extent = cnt_area / rect_area if rect_area > 0 else 0
     return area, aspect_ratio, solidity, extent
 
-# Load video
 cap = cv2.VideoCapture("filmy/00000.mp4")
 frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -141,7 +136,6 @@ while cap.isOpened():
     merged_boxes = merge_boxes(filtered_boxes, iou_threshold=0.4)
     merged_boxes = remove_inner_boxes(merged_boxes)
 
-    # Every N frames = ~5 seconds
     if frame_counter % frame_interval == 0:
         for box in merged_boxes:
             x, y, w, h = box
@@ -160,7 +154,6 @@ while cap.isOpened():
                 writer.writerow([bbox_id, area, ar, solidity, extent, ""])
             bbox_id += 1
 
-    # Draw
     for (x, y, w, h) in merged_boxes:
         cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 255), 2)
 

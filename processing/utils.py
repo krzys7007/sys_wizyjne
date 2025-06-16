@@ -1,5 +1,7 @@
 import cv2
 import numpy as np
+import time
+
 from collections import deque
 
 def convert_result(counts):
@@ -25,7 +27,7 @@ def perform_processing(cap: cv2.VideoCapture):
     MAX_DISTANCE = 50
     MIN_AREA = 500
     COUNT_LINE_OFFSET = 350
-    MEMORY = 60
+    MEMORY = 30
 
     fgbg = cv2.createBackgroundSubtractorMOG2(history=300, varThreshold=50)
     counted_ids = {}
@@ -101,11 +103,11 @@ def perform_processing(cap: cv2.VideoCapture):
                 roi_name = name
                 break
 
-        if roi_name == "cl_str":
+        if roi_name == "cl_str" and 0.1 < aspect_ratio < 0.7:
             if area < 160000:
                 return 'car'
-        elif roi_name == "fh_str":
-            if area < 40000:
+        elif roi_name == "fh_str" and 0.1 < aspect_ratio < 0.7:
+            if area < 65000:
                 return 'car'
 
         if roi_name == "sidewalk":
@@ -115,10 +117,10 @@ def perform_processing(cap: cv2.VideoCapture):
                 return 'bike'
             
         if roi_name == "cl_str":
-            if area > 140000:
+            if area > 160000:
                 return 'truck'
         elif roi_name == "fh_str":
-            if area > 40000:
+            if area > 65000:
                 return 'truck'
 
         if roi_name == "tram_line":
@@ -213,19 +215,19 @@ def perform_processing(cap: cv2.VideoCapture):
     line_x = frame_width // 2 - COUNT_LINE_OFFSET
     roi_definitions = [
         ("sidewalk", 630, frame_height),
-        ("cl_str", 440, 620),
-        ("tram_line", 330, 460),
-        ("fh_str", 200, 360)
+        ("cl_str", 460, 620),
+        ("fh_str", 200, 360),
+        ("tram_line", 330, 470)
     ]
 
-    frame_count = 0
+    # frame_count = 0
 
     while cap.isOpened():
-        frame_count += 1
+        # prev_time = time.time()
+        # frame_count += 1
         ret, frame = cap.read()
         if not ret:
             break
-        
         pole_list = []
 
         pole_start = (1042, 400)
@@ -237,17 +239,17 @@ def perform_processing(cap: cv2.VideoCapture):
         pole_list.append([pole_start, pole_end])
         
 
-        
+        """
         pole_start = (1396, 0)
         pole_end = (1378, 332)
         pole_list.append([pole_start, pole_end])
-
+        """
         # frame = remove_crooked_line(frame, pole_start, pole_end, pole_width)
-
+        """
         pole_start = (1566, 356)
         pole_end = (1534, 700)
         pole_list.append([pole_start, pole_end])
-        pole_width = 20
+        """
 
         pole_width = 30
         
@@ -262,7 +264,7 @@ def perform_processing(cap: cv2.VideoCapture):
 
         opening = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, (15, 15))
         closing = cv2.morphologyEx(opening, cv2.MORPH_CLOSE, (105, 105))
-        dilation = cv2.dilate(closing,(305, 305),iterations = 15)
+        dilation = cv2.dilate(closing,(305, 305),iterations = 10)
 
         filtered = dilation
         filtered1 = cv2.cvtColor(dilation, cv2.COLOR_GRAY2BGR)
@@ -319,7 +321,7 @@ def perform_processing(cap: cv2.VideoCapture):
                 new_tracks[oid] = (cx, cy)
                 track_paths[oid] = deque(maxlen=MEMORY)
                 track_paths[oid].append((cx, cy))
-                if near_line(cx):
+                if near_line(cx, 20):
                     obj_type = classify(w, h, y + h)
                     object_types[oid] = obj_type
                     if w > 0:
@@ -331,25 +333,38 @@ def perform_processing(cap: cv2.VideoCapture):
                 next_id += 1
             else:
                 oid = matched_oid
-                if near_line(cx) and oid not in object_types:
+                if near_line(cx, 20) and oid not in object_types:
                     obj_type = classify(w, h, y + h)
                     object_types[oid] = obj_type
                     aspect_ratio = round(h / w, 2) if w > 0 else 0
                     last_bbox_info[oid] = (x, y, w, h, aspect_ratio)
 
         ids_to_remove = []
-        for oid in tracks:
-            if oid not in new_tracks:
-                path = track_paths[oid]
-                obj_type = object_types.get(oid)
-                direction = get_direction(path, line_x, obj_type)
-                if obj_type and direction and oid not in counted_ids:
-                    if obj_type in counts:
-                        if direction in counts[obj_type]:
-                            counts[obj_type][direction] = counts[obj_type][direction] + 1
-                    counted_ids[oid] = direction
-                    crossed_line[oid] = True
-                ids_to_remove.append(oid)
+        for oid in new_tracks:
+            path = track_paths[oid]
+            if len(path) < 2:
+                continue
+            prev_x = path[-2][0]
+            curr_x = path[-1][0]
+
+            if oid in counted_ids:
+                continue
+
+            obj_type = object_types.get(oid)
+            if not obj_type:
+                continue
+
+            if prev_x < line_x and curr_x >= line_x:
+                direction = 'left_to_right'
+            elif prev_x > line_x and curr_x <= line_x:
+                direction = 'right_to_left'
+            else:
+                continue
+
+            if obj_type in counts and direction in counts[obj_type]:
+                counts[obj_type][direction] += 1
+                counted_ids[oid] = direction
+
 
         for oid in ids_to_remove:
             track_paths.pop(oid, None)
@@ -359,7 +374,6 @@ def perform_processing(cap: cv2.VideoCapture):
         tracks = new_tracks
 
         cv2.line(frame, (line_x, 0), (line_x, frame_height), (255, 0, 0), 2)
-
         for oid, (cx, cy) in tracks.items():
             obj_type = object_types.get(oid, '?')
 
@@ -375,11 +389,9 @@ def perform_processing(cap: cv2.VideoCapture):
                 else:
                     roi_text = "ROI: unknown"
 
-
                 label = f"{obj_type} AR:{aspect_ratio} A:{w*h}"
                 direction = get_direction(track_paths[oid], line_x, obj_type)
                 dir_text = f"DIR: {direction}" if direction else "DIR: X"
-
                 if oid in counted_ids:
                     box_color = (0, 0, 255)
                 else:
@@ -405,10 +417,13 @@ def perform_processing(cap: cv2.VideoCapture):
             cv2.rectangle(frame, (0, y_start), (frame_width, y_end), color, 2)
             cv2.putText(frame, name, (10, y_start + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
+        # curr_time = time.time()
+        # fps = 1 / (curr_time - prev_time)
+        # prev_time = curr_time
 
-        cv2.drawContours(filtered1, contours, -1, (0,255,0), 3)
+        # cv2.putText(frame, f"FPS: {(curr_time - prev_time):.2f}", (frame_width - 150, 30),
+        #             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        frame = cv2.resize(frame, (0, 0), fx = 0.8, fy = 0.8)
         
         cv2.imshow("Counter", frame)
         key = cv2.waitKey(1) & 0xFF

@@ -91,7 +91,6 @@ def perform_processing(cap: cv2.VideoCapture):
         result = cv2.inpaint(image, mask, inpaintRadius=3, flags=cv2.INPAINT_TELEA)
         return result
 
-
     def classify(w, h, y):
         area = w * h
         aspect_ratio = h / w if w > 0 else 0
@@ -102,10 +101,10 @@ def perform_processing(cap: cv2.VideoCapture):
                 roi_name = name
                 break
 
-        if roi_name == "closer_street":
+        if roi_name == "cl_str":
             if area < 160000:
                 return 'car'
-        elif roi_name == "further_street":
+        elif roi_name == "fh_str":
             if area < 40000:
                 return 'car'
 
@@ -115,10 +114,10 @@ def perform_processing(cap: cv2.VideoCapture):
             else:
                 return 'bike'
             
-        if roi_name == "closer_street":
+        if roi_name == "cl_str":
             if area > 140000:
                 return 'truck'
-        elif roi_name == "further_street":
+        elif roi_name == "fh_str":
             if area > 40000:
                 return 'truck'
 
@@ -141,11 +140,11 @@ def perform_processing(cap: cv2.VideoCapture):
         inter_area = max(0, xb - xa) * max(0, yb - ya)
         box1_area = w1 * h1
         box2_area = w2 * h2
-        iou = inter_area / float(box1_area + box2_area - inter_area + 1e-5)
+        iopercent = inter_area / float(box1_area + box2_area - inter_area + 1e-5)
 
-        return iou > threshold
+        return iopercent > threshold
 
-    def merge_boxes(boxes, iou_threshold=0.1):
+    def merge_boxes(boxes, iopercent_threshold=0.1):
         if not boxes:
             return []
 
@@ -162,7 +161,7 @@ def perform_processing(cap: cv2.VideoCapture):
                 if used[j]:
                     continue
                 bx = boxes[j]
-                if boxes_overlap((x2, y2, w2, h2), bx, threshold=iou_threshold):
+                if boxes_overlap((x2, y2, w2, h2), bx, threshold=iopercent_threshold):
                     x2 = min(x2, bx[0])
                     y2 = min(y2, bx[1])
                     w2 = max(x2 + w2, bx[0] + bx[2]) - x2
@@ -173,7 +172,7 @@ def perform_processing(cap: cv2.VideoCapture):
             used[i] = True
 
         if len(merged) < len(boxes):
-            return merge_boxes(merged, iou_threshold)
+            return merge_boxes(merged, iopercent_threshold)
         else:
             return merged
 
@@ -214,9 +213,9 @@ def perform_processing(cap: cv2.VideoCapture):
     line_x = frame_width // 2 - COUNT_LINE_OFFSET
     roi_definitions = [
         ("sidewalk", 630, frame_height),
-        ("closer_street", 440, 620),
+        ("cl_str", 440, 620),
         ("tram_line", 330, 460),
-        ("further_street", 200, 360)
+        ("fh_str", 200, 360)
     ]
 
     frame_count = 0
@@ -278,7 +277,7 @@ def perform_processing(cap: cv2.VideoCapture):
                 continue
             filtered_boxes.append((x, y, w, h))
 
-        merged_boxes = merge_boxes(filtered_boxes, iou_threshold=0.4)
+        merged_boxes = merge_boxes(filtered_boxes, iopercent_threshold=0.4)
         merged_boxes = remove_inner_boxes(merged_boxes)
 
         detections = []
@@ -290,7 +289,18 @@ def perform_processing(cap: cv2.VideoCapture):
         used = set()
         new_tracks = {}
 
-        for (cx, cy), (x, y, w, h) in detections:
+        for detection in detections:
+            center = detection[0]
+            bbox = detection[1]
+
+            cx = center[0]
+            cy = center[1]
+
+            x = bbox[0]
+            y = bbox[1]
+            w = bbox[2]
+            h = bbox[3]
+            
             matched = False
             matched_oid = None
             for oid, (px, py) in tracks.items():
@@ -312,7 +322,11 @@ def perform_processing(cap: cv2.VideoCapture):
                 if near_line(cx):
                     obj_type = classify(w, h, y + h)
                     object_types[oid] = obj_type
-                    aspect_ratio = round(h / w, 2) if w > 0 else 0
+                    if w > 0:
+                        aspect_ratio = h / w
+                        aspect_ratio = round(aspect_ratio, 2)
+                    else:
+                        aspect_ratio = 0
                     last_bbox_info[oid] = (x, y, w, h, aspect_ratio)
                 next_id += 1
             else:
@@ -330,7 +344,9 @@ def perform_processing(cap: cv2.VideoCapture):
                 obj_type = object_types.get(oid)
                 direction = get_direction(path, line_x, obj_type)
                 if obj_type and direction and oid not in counted_ids:
-                    counts[obj_type][direction] += 1
+                    if obj_type in counts:
+                        if direction in counts[obj_type]:
+                            counts[obj_type][direction] = counts[obj_type][direction] + 1
                     counted_ids[oid] = direction
                     crossed_line[oid] = True
                 ids_to_remove.append(oid)
@@ -354,11 +370,15 @@ def perform_processing(cap: cv2.VideoCapture):
                     if y + h >= y_start and y + h <= y_end:
                         roi_name = name
                         break
-                roi_text = f"ROI: {roi_name}" if roi_name else "ROI: unknown"
+                if roi_name:
+                    roi_text = "ROI: " + roi_name
+                else:
+                    roi_text = "ROI: unknown"
+
 
                 label = f"{obj_type} AR:{aspect_ratio} A:{w*h}"
                 direction = get_direction(track_paths[oid], line_x, obj_type)
-                dir_text = f"DIR: {direction}" if direction else "DIR: ?"
+                dir_text = f"DIR: {direction}" if direction else "DIR: X"
 
                 if oid in counted_ids:
                     box_color = (0, 0, 255)
@@ -381,7 +401,7 @@ def perform_processing(cap: cv2.VideoCapture):
             y_pos += 30
 
         for name, y_start, y_end in roi_definitions:
-            color = (0, 255, 0) if name == "closer_street" else (255, 0, 255) if name == "further_street" else (255, 255, 0)
+            color = (0, 255, 0) if name == "cl_str" else (255, 0, 255) if name == "fh_str" else (255, 255, 0)
             cv2.rectangle(frame, (0, y_start), (frame_width, y_end), color, 2)
             cv2.putText(frame, name, (10, y_start + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
 
